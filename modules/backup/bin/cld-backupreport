@@ -121,10 +121,33 @@ EOKEEPLASTROTATE
 parsebackupmethod()
 {
 cat << 'EOPARSE'
-METHOD_SET=$(du -h $(ls -hd ${SERVER_BACKUP_DIR}/${INSTANCE}/*/${BACKUP_METHOD} | tail -1))
+METHOD_COPYCOUNT=$(ls -hd ${SERVER_BACKUP_DIR}/${INSTANCE}/*/${BACKUP_METHOD} 2>/dev/null | wc -w)
+if [ "${METHOD_COPYCOUNT}" != "0" ]; then
+METHOD_DIR=$(ls -hd ${SERVER_BACKUP_DIR}/${INSTANCE}/*/${BACKUP_METHOD} | tail -1)
+METHOD_SET=$(du -hd 0 ${METHOD_DIR})
+METHOD_RAW_SIZE1=$(du -d 0 ${METHOD_DIR})
+sleep 1s
+METHOD_RAW_SIZE2=$(du -d 0 ${METHOD_DIR})
 METHOD_SIZE=$(awk '{print $1}' <<< "${METHOD_SET}")
 METHOD_DATE=$(echo "${METHOD_SET}" | rev | cut -d / -f 2 | rev | cut -d _ -f 1)
-echo "${BACKUP_METHOD}: ${METHOD_DATE} - ${METHOD_SIZE}"
+else
+METHOD_SET=""
+METHOD_SIZE="0"
+METHOD_DATE="NEVER DONE"
+fi
+if [ "${METHOD_SIZE}" = "4.0K" ]; then
+METHOD_SIZE="0"
+METHOD_STATUS="EMPTY"
+elif [ "${METHOD_SET}" = "" ]; then
+METHOD_STATUS="FAIL"
+elif [ "${METHOD_DATE}" != "${REPORT_DATE}" ]; then
+METHOD_STATUS="OUTDATED"
+elif [ "${METHOD_RAW_SIZE1}" != "${METHOD_RAW_SIZE2}" ]; then
+METHOD_STATUS="INPROGRESS"
+elif [ "${METHOD_DATE}" = "${REPORT_DATE}" ]; then
+METHOD_STATUS="OK"
+fi
+echo "${BACKUP_METHOD}: ${METHOD_DATE} - ${METHOD_COPYCOUNT} - ${METHOD_SIZE} - ${METHOD_STATUS}"
 EOPARSE
 }
 
@@ -141,8 +164,10 @@ done
 EOSTORAGEPARSE
 }
 
+REPORT_DATE=$(date +%F)
+
 cat << EOREPORT
-Backup report $(date +%F):
+Backup report ${REPORT_DATE}:
 ----------------------------
 
 Instances:
@@ -171,6 +196,7 @@ defineserver
 /var/cld/bin/cldx-bash-notty ${BACKUP_SERVER} ${CLD_ALL_GROUPS_ARG} << EOCLD > /var/cld/tmp/backup/report_${REPORTID}/${INSTANCE}/${BACKUP_METHOD}
 INSTANCE=${INSTANCE}
 BACKUP_METHOD=${BACKUP_METHOD}
+REPORT_DATE=${REPORT_DATE}
 
 ### CLD default variables ###
 $(defaultvarsinit)

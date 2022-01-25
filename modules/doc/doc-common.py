@@ -17,7 +17,7 @@ initjson['info']['x-logo']['altText'] = 'ClassicDevOps logo'
 
 cld_domain = bash('''grep CLD_DOMAIN /var/cld/creds/creds | cut -d = -f 2 | tr -d '"' ''')
 repo_modules = bash('''grep '!/modules' /var/cld/.gitignore | cut -d / -f 3 | head -c -1 | tr '\n' ',' ''')
-modules = bash("find /var/cld/ /var/cld/{cm,deploy} /var/cld/modules/{"+repo_modules+"}/ -maxdepth 1 -name 'bin' -o -name 'README.md'").split('\n')
+modules = bash("find /var/cld/ /var/cld/modules/{"+repo_modules+"}/ -maxdepth 1 -name 'bin' -o -name 'README.md'").split('\n')
 
 itter = 0
 for modulepath in modules:
@@ -53,7 +53,7 @@ for modulepath in modules:
       tool = toolpath.split('/')[-1]
       print('tool: '+tool)
       print('toolpath: '+toolpath)
-      toolinfo = yaml.load(bash("grep -q '/var/cld/bin/include/cldfuncs' "+toolpath+" && HELPYAML=1 "+toolpath+" --help"))
+      toolinfo = yaml.safe_load(bash("grep -q '/var/cld/bin/include/cldfuncs' "+toolpath+" && HELPYAML=1 "+toolpath+" --help"))
       try: tool_desc = toolinfo['Description']
       except: pass
       try: tool_args = toolinfo['Arguments']

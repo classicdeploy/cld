@@ -55,7 +55,7 @@ BACKUP_METHODS="$(ls /var/cld/modules/backup/data/instances/${INSTANCE}/ 2>/dev/
 loadmethodvars()
 {
 source <(grep "^CRON=\|^KEEPLAST=" ${BACKUP_VARS_DIR}/${BACKUP_METHOD})
-CRON=${CRON:-'* * 0 0 0'}
+CRON=${CRON:-'0 0 * * *'}
 KEEPLAST=${KEEPLAST:-7}
 }
 
@@ -94,8 +94,8 @@ cat << 'EODATE'
 DATE=$(date +%Y-%m-%d_%H-%M)
 EODATE
 cat << 'EOTIMEOUTS'
-TIMEOUT=64800
-TIMEOUT_NOTTY=64800
+TIMEOUT=172800
+TIMEOUT_NOTTY=172800
 EOTIMEOUTS
 }
 
@@ -118,12 +118,64 @@ find ${SERVER_BACKUP_DIR}/${INSTANCE}/ -type d -empty -exec rmdir {} \;
 EOKEEPLASTROTATE
 }
 
+checkbackupscript()
+{
+cat << EODEFINEVARS
+RUNDATE='${RUNDATE}'
+BACKUP_METHOD='${BACKUP_METHOD}'
+INSTANCE='${INSTANCE}'
+CRON='${CRON}'
+EODEFINEVARS
+cat << 'EOCHECKBACKUPSCRIPT'
+unset mv &>/dev/null
+CURRENT_HASH=$(md5sum /root/cld/backup/${BACKUP_METHOD}-${INSTANCE} 2>/dev/null | awk '{print $1}')
+NEW_HASH=$(md5sum /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}_tmp  2>/dev/null | awk '{print $1}')
+if [ "${CURRENT_HASH}" != "${NEW_HASH}" ]; then
+mv -f /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}_tmp /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}
+chmod 700 /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}
+elif ! [ -d /root/cld/backup/${BACKUP_METHOD}-${INSTANCE} ]; then
+mv -f /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}_tmp /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}
+chmod 700 /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}
+fi
+[ -d /root/cld/cron/${RUNDATE} ] || mkdir /root/cld/cron/${RUNDATE} -p &>/dev/null
+cat > /root/cld/cron/${RUNDATE}/${BACKUP_METHOD}-${INSTANCE} << EOCRON
+${CRON} root bash -lc "/root/cld/backup/${BACKUP_METHOD}-${INSTANCE}"
+EOCRON
+EOCHECKBACKUPSCRIPT
+}
+
+checkcron()
+{
+echo "RUNDATE=${RUNDATE}"
+cat << 'EOCHECKCRON'
+CURRENT_HASH=$(md5sum /etc/cron.d/cld_backup 2>/dev/null | awk '{print $1}')
+NEW_HASH=$(cat /root/cld/cron/${RUNDATE}/* 2>/dev/null | uniq | sort -n -k2 -k1 | md5sum | awk '{print $1}')
+if [ "${CURRENT_HASH}" != "${NEW_HASH}" ]; then
+unset mv &>/dev/null
+rm -f /etc/cron.d/cld_backup &>/dev/null
+cat /root/cld/cron/${RUNDATE}/* 2>/dev/null | uniq | sort -n -k2 -k1 > /etc/cron.d/cld_backup
+chmod 600 /etc/cron.d/cld_backup
+rm -f /root/cld/cron/${RUNDATE}/* &>/dev/null
+rmdir /root/cld/cron/${RUNDATE} &>/dev/null
+else
+rm -f /root/cld/cld_backup_cron_${RUNDATE}
+fi
+EOCHECKCRON
+}
+
 cat << EOREPORT
 Deploy backup methods $(date +%F):
 ----------------------------
 
 Instances:
 EOREPORT
+
+# for BACKUP_SERVER in $(grep -v "^$\|^#" /var/cld/modules/backup/data/servers | cut -d ',' -f 1)
+# do
+# /var/cld/bin/cldx-bash-notty ${BACKUP_SERVER} ${CLD_ALL_GROUPS_ARG} << EOBACKUPCRON
+# rm -f /root/cld/cld_backup_cron_${RUNDATE} &>/dev/null
+# EOBACKUPCRON
+# done
 
 ############## Deploy begin ##############
 for INSTANCE in $(CLOUDS_USER_ALLOWED --groups="${CLD_GROUPS}" "$ARG1" "$ARG2" "$ARG3" "$CLD_ALL_GROUPS_ARG")
@@ -138,11 +190,12 @@ for BACKUP_METHOD in ${BACKUP_METHODS}
 do
 validatemethod
 loadmethodvars
-defineserver 
-/var/cld/bin/cldx-bash-notty ${BACKUP_SERVER} ${CLD_ALL_GROUPS_ARG} << EOCLD${RANDID}
+defineserver
+/var/cld/bin/cldx-bash-notty ${BACKUP_SERVER} ${CLD_ALL_GROUPS_ARG} << EOCLD
 mkdir /root/cld/backup -p &>/dev/null
 
-cat > /root/cld/backup/${BACKUP_METHOD}-${INSTANCE} << 'EOBACKUP'${RANDID}
+cat > /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}_tmp << 'EOBACKUP'
+#!/bin/bash
 INSTANCE=${INSTANCE}
 BACKUP_METHOD=${BACKUP_METHOD}
 
@@ -169,16 +222,19 @@ $(cat /var/cld/modules/backup/methods/${BACKUP_METHOD}/backup)
 ### Rotating backups ###
 $(keeplastrotate)
 ########################
-EOBACKUP${RANDID}
-chmod 700 /root/cld/backup/${BACKUP_METHOD}-${INSTANCE}
+EOBACKUP
 
-cat > /etc/cron.d/cld-backup-${BACKUP_METHOD}-${INSTANCE} << 'EOCRON'${RANDID}
-${CRON} root bash -lc "/root/cld/backup/${BACKUP_METHOD}-${INSTANCE}"
-EOCRON${RANDID}
-chmod 600 /etc/cron.d/cld-backup-${BACKUP_METHOD}-${INSTANCE}
-EOCLD${RANDID}
+$(checkbackupscript)
+EOCLD
 done
 ) &
+sleep 0.1s
 done
 
 wait
+for BACKUP_SERVER in $(grep -v "^$\|^#" /var/cld/modules/backup/data/servers | cut -d ',' -f 1 | sort -u)
+do
+/var/cld/bin/cldx-bash-notty ${BACKUP_SERVER} ${CLD_ALL_GROUPS_ARG} << EOBACKUPCRON
+$(checkcron)
+EOBACKUPCRON
+done
